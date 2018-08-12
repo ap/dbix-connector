@@ -11,7 +11,7 @@ my %META = (
 		Module::Metadata->provides( dir => 'lib', version => 2 );
 	} ),
 	prereqs   => {
-		build => {
+		test  => {
 			requires   => {qw(
 				Test::MockModule   0.05
 				Test::More         0.88
