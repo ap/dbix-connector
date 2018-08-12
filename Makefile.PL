@@ -39,7 +39,7 @@ sub MY::postamble { <<'' }
 create_distdir : MANIFEST
 distdir        : MANIFEST
 MANIFEST :
-	( git ls-files ; echo MANIFEST ) | sort -f > MANIFEST
+	( git ls-files ':!README.pod' . ; echo MANIFEST ) | sort -f > MANIFEST
 
 ## BOILERPLATE ###############################################################
 require ExtUtils::MakeMaker;
