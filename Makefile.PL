@@ -1,6 +1,6 @@
 use 5.006; use strict; use warnings;
 
-my $u = 'github.com/theory/dbix-connector';
+my $u = 'github.com/ap/DBIx-Connector';
 
 my %META = (
 	name      => 'DBIx-Connector',
@@ -28,9 +28,8 @@ my %META = (
 		}
 	},
 	resources      => {
-		homepage   => 'http://search.cpan.org/dist/DBIx-Connector/',
-		repository => { url => "https://$u" },
-		bugtracker => { web => "https://$u/issues/" },
+		repository => { type => 'git', url => "git://$u.git", web => "https://$u" },
+		bugtracker => { web => "https://$u/issues" },
 		license    => [ 'http://dev.perl.org/licenses/' ],
 	},
 );
