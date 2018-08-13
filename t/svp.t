@@ -4,7 +4,8 @@ use strict;
 use warnings;
 use Test::More tests => 88;
 #use Test::More 'no_plan';
-use Test::MockModule;
+use lib 'inc';
+use Hook::Guard;
 
 my $CLASS;
 BEGIN {
@@ -15,16 +16,17 @@ BEGIN {
 ok my $conn = $CLASS->new( 'dbi:ExampleP:dummy', '', '' ),
     'Get a connection';
 
-my $module = Test::MockModule->new($CLASS);
-my $driver = Test::MockModule->new("$CLASS\::Driver");
-
 # Mock the savepoint driver methods.
-$driver->mock( $_ => sub { shift } ) for qw(savepoint release rollback_to);
+my %driver_meth = map { my $glob = $_; s/.*:://; $_ => Hook::Guard->new( $glob ) }
+	do { package DBIx::Connector::Driver; *savepoint, *release, *rollback_to, *begin_work, *commit };
+$driver_meth{ $_ }->hook( sub { shift } ) for qw( savepoint release rollback_to );
 
 # Test with no existing dbh.
-$module->mock( _connect => sub {
+my $connect_meth = Hook::Guard->new( *DBIx::Connector::_connect );
+my $connect_orig = $connect_meth->original;
+$connect_meth->hook( sub {
     pass '_connect should be called';
-    $module->original('_connect')->(@_);
+    &$connect_orig;
 });
 
 ok my $dbh = $conn->dbh, 'Fetch the database handle';
@@ -40,7 +42,7 @@ ok $conn->svp(sub {
     ok $conn->{_in_run}, '_in_run should be true';
     is $conn->{_svp_depth}, 0, 'Depth should still be 0';
 }), 'Do something with no existing handle';
-$module->unmock( '_connect');
+$connect_meth->unhook;
 ok !$conn->{_in_run}, '_in_run should be false again';
 ok $dbh->{AutoCommit}, 'Transaction should be committed';
 ok !$conn->in_txn, 'in_txn() should know it, too';
@@ -145,9 +147,9 @@ $conn->txn(sub {
 NOEXIT: {
     no warnings;
 
-    $driver->mock(begin_work => sub { shift });
+    $driver_meth{'begin_work'}->hook( sub { shift } );
     my $keyword;
-    $driver->mock(commit => sub {
+    $driver_meth{'commit'}->hook( sub {
         pass "Commit should be called when returning via $keyword"
     });
 
@@ -166,10 +168,9 @@ NOEXIT: {
 }
 
 # Have the rollback_to die.
-my $dbi_mock = Test::MockModule->new(ref $dbh, no_auto => 1);
-$dbi_mock->mock(begin_work => undef );
-$dbi_mock->mock(rollback   => undef );
-$driver->mock( rollback_to => sub { die 'ROLLBACK TO WTF' });
+my $begin_work_meth = Hook::Guard->new( *DBI::db::begin_work )->hook( sub { return } );
+my $rollback_meth   = Hook::Guard->new( *DBI::db::rollback )  ->hook( sub { return } );
+$driver_meth{'rollback_to'}->hook( sub { die 'ROLLBACK TO WTF' } );
 $dbh->{AutoCommit} = 0; # Ensure we run a savepoint.
 eval { $conn->svp(sub { die 'Savepoint WTF' }) };
 
@@ -192,7 +193,7 @@ like $err->rollback_error, qr/ROLLBACK TO WTF/, 'Should have rollback error';
 like $err->error, qr/Nested WTF/, 'Should have nested savepoint error';
 
 # Now try a savepoint rollback failure *and* a transaction rollback failure.
-$dbi_mock->mock(rollback => sub { die 'Rollback WTF' } );
+$rollback_meth->hook( sub { die 'Rollback WTF' } );
 $dbh->{AutoCommit} = 1;
 eval {
     $conn->txn(sub {

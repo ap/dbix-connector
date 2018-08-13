@@ -4,7 +4,8 @@ use strict;
 use warnings;
 use Test::More tests => 94;
 #use Test::More 'no_plan';
-use Test::MockModule;
+use lib 'inc';
+use Hook::Guard;
 
 my $CLASS;
 BEGIN {
@@ -15,12 +16,12 @@ BEGIN {
 ok my $conn = $CLASS->new( 'dbi:ExampleP:dummy', '', '' ),
     'Get a connection';
 
-my $module = Test::MockModule->new($CLASS);
-
 # Test with no existing dbh.
-$module->mock( _connect => sub {
+my $connect_meth = Hook::Guard->new( *DBIx::Connector::_connect );
+my $connect_orig = $connect_meth->original;
+$connect_meth->hook( sub {
     pass '_connect should be called';
-    $module->original('_connect')->(@_);
+    &$connect_orig;
 });
 
 ok my $dbh = $conn->dbh, 'Fetch the database handle';
@@ -29,9 +30,8 @@ ok !$conn->in_txn, 'in_txn() should know that, too';
 ok !$conn->{_in_run}, '_in_run should be false';
 
 # Set up a DBI mocker.
-my $dbi_mock = Test::MockModule->new(ref $dbh, no_auto => 1);
 my $ping = 0;
-$dbi_mock->mock( ping => sub { ++$ping } );
+my $ping_meth = Hook::Guard->new( *DBI::db::ping )->hook( sub { ++$ping } );
 
 is $conn->{_dbh}, $dbh, 'The dbh should be stored';
 is $ping, 0, 'No pings yet';
@@ -45,7 +45,7 @@ ok $conn->txn(sub {
     is $conn->dbh, $dbh, 'Should get same dbh from dbh()';
     is $ping, 1, 'ping should not have been called again';
 }), 'Do something with no existing handle';
-$module->unmock( '_connect');
+$connect_meth->unhook;
 ok !$conn->{_in_run}, '_in_run should be false again';
 ok $dbh->{AutoCommit}, 'Transaction should be committed';
 ok !$conn->in_txn, 'in_txn() should know it';
@@ -133,7 +133,7 @@ $conn->txn(sub {
     my $dbh = shift;
     ok !$dbh->{AutoCommit}, 'We should be in a txn';
     ok $conn->in_txn, 'in_txn() should know that, too';
-    $dbi_mock->mock( ping => 0 );
+    $ping_meth->hook( sub { 0 } );
     $conn->txn(sub {
         is shift, $dbh, 'Nested txn should get same dbh, even though inactive';
         ok !$dbh->{AutoCommit}, 'Nested txn should be in the txn';
@@ -169,10 +169,9 @@ $conn->txn(sub {
 NOEXIT: {
     no warnings;
 
-    my $dr_mock = Test::MockModule->new(ref $driver, no_auto => 1);
-    $dr_mock->mock(begin_work => sub { shift });
+    my $begin_work_meth = Hook::Guard->new( *DBIx::Connector::Driver::begin_work )->hook( sub { shift } );
     my $keyword;
-    $dr_mock->mock(commit => sub {
+    my $begin_work_meth = Hook::Guard->new( *DBIx::Connector::Driver::commit )->hook( sub {
         pass "Commit should be called when returning via $keyword"
     });
 
@@ -189,8 +188,8 @@ NOEXIT: {
 }
 
 # Have the rollback die.
-$dbi_mock->mock(begin_work => undef );
-$dbi_mock->mock(rollback => sub { die 'Rollback WTF' });
+my $begin_work_meth = Hook::Guard->new( *DBI::db::begin_work )->hook( sub { return } );
+my $rollback_meth   = Hook::Guard->new( *DBI::db::rollback )->hook( sub { die 'Rollback WTF' } );
 
 eval { $conn->txn(sub {
     die 'Transaction WTF';

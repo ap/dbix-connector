@@ -13,7 +13,6 @@ my %META = (
 	prereqs   => {
 		test  => {
 			requires   => {qw(
-				Test::MockModule   0.05
 				Test::More         0.88
 			)},
 		},

@@ -4,7 +4,8 @@ use strict;
 use warnings;
 use Test::More tests => 40;
 #use Test::More 'no_plan';
-use Test::MockModule;
+use lib 'inc';
+use Hook::Guard;
 
 my $CLASS;
 BEGIN {
@@ -15,12 +16,12 @@ BEGIN {
 ok my $conn = $CLASS->new( 'dbi:ExampleP:dummy', '', '' ),
     'Get a connection';
 
-my $module = Test::MockModule->new($CLASS);
-
 # Test with no existing dbh.
-$module->mock( _connect => sub {
+my $connect_meth = Hook::Guard->new( *DBIx::Connector::_connect );
+my $connect_orig = $connect_meth->original;
+$connect_meth->hook( sub {
     pass '_connect should be called';
-    $module->original('_connect')->(@_);
+    &$connect_orig;
 });
 
 ok $conn->run( ping => sub {
@@ -30,13 +31,12 @@ ok $conn->run( ping => sub {
 }), 'Do something with no existing handle';
 
 # Test with instantiated dbh.
-$module->unmock( '_connect');
+$connect_meth->unhook;
 ok my $dbh = $conn->dbh, 'Fetch the dbh';
 
 # Set up a DBI mocker.
-my $dbi_mock = Test::MockModule->new(ref $dbh, no_auto => 1);
 my $ping = 0;
-$dbi_mock->mock( ping => sub { ++$ping });
+my $ping_meth = Hook::Guard->new( *DBI::db::ping )->hook( sub { ++$ping } );
 
 is $conn->{_dbh}, $dbh, 'The dbh should be stored';
 is $ping, 0, 'No pings yet';
@@ -97,7 +97,7 @@ $conn->run( ping => sub {
 $conn->run( ping => sub {
     my $dbh = shift;
     ok $conn->{_in_run}, '_in_run should be set inside run()';
-    $dbi_mock->mock( ping => 0 );
+    $ping_meth->hook( sub { 0 } );
     $conn->run( ping => sub {
         is shift, $dbh, 'Nested get the same dbh even if ping is false';
         is $_, $dbh, 'Should have dbh in $_';
